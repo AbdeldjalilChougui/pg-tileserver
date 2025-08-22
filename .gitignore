@@ -1,0 +1,8 @@
+/pg-tileserver
+*.exe
+.env
+.env.*
+*.test
+coverage.out
+.idea/
+.vscode/
