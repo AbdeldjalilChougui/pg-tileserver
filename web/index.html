@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pg-tileserver preview</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #panel { position: absolute; top: 10px; left: 10px; background: #fff; padding: 10px 12px; border-radius: 8px;
+           box-shadow: 0 1px 6px rgba(0,0,0,.25); max-width: 300px; max-height: 80vh; overflow: auto; z-index: 1; }
+  #panel h1 { font-size: 15px; margin: 0 0 6px; }
+  #panel label { display: block; margin: 4px 0; }
+  #panel small { color: #666; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel"><h1>pg-tileserver</h1><div id="layers">Loading layers…</div><small id="stats"></small></div>
+<script>
+const colors = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#46f0f0", "#f032e6", "#9a6324"];
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: { osm: { type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize: 256,
+                      attribution: "© OpenStreetMap contributors" } },
+    layers: [{ id: "osm", type: "raster", source: "osm", paint: { "raster-saturation": -0.6 } }],
+  },
+  center: [3, 30], zoom: 4,
+});
+map.addControl(new maplibregl.NavigationControl());
+map.showTileBoundaries = new URLSearchParams(location.search).has("debug");
+
+function styleLayers(l, color) {
+  const t = (l.geometry_type || "").toUpperCase();
+  const base = { source: l.id, "source-layer": l.id };
+  if (t.includes("POLYGON")) return [
+    { ...base, id: l.id + "-fill", type: "fill", paint: { "fill-color": color, "fill-opacity": 0.25 } },
+    { ...base, id: l.id + "-line", type: "line", paint: { "line-color": color, "line-width": 1 } }];
+  if (t.includes("LINE")) return [{ ...base, id: l.id + "-line", type: "line", paint: { "line-color": color, "line-width": 2 } }];
+  return [{ ...base, id: l.id + "-pt", type: "circle",
+            paint: { "circle-color": color, "circle-radius": 5, "circle-stroke-color": "#fff", "circle-stroke-width": 1 } }];
+}
+
+map.on("load", async () => {
+  const layers = await (await fetch("layers")).json();
+  const box = document.getElementById("layers");
+  box.innerHTML = layers.length ? "" : "No geometry tables found.";
+  let all = null;
+  layers.forEach((l, i) => {
+    const color = colors[i % colors.length];
+    map.addSource(l.id, { type: "vector", url: l.tilejson });
+    const styled = styleLayers(l, color);
+    styled.forEach((s) => map.addLayer(s));
+    const lab = document.createElement("label");
+    lab.innerHTML = `<input type="checkbox" checked> <span class="swatch" style="background:${color}"></span>${l.id}
+      <small>${l.geometry_type} · SRID ${l.srid}</small>`;
+    lab.querySelector("input").onchange = (e) =>
+      styled.forEach((s) => map.setLayoutProperty(s.id, "visibility", e.target.checked ? "visible" : "none"));
+    box.append(lab);
+    map.on("click", styled[styled.length - 1].id, (e) => {
+      const p = e.features[0].properties;
+      new maplibregl.Popup().setLngLat(e.lngLat)
+        .setHTML(`<b>${l.id}</b><br>` + Object.entries(p).map(([k, v]) => `${k}: ${v}`).join("<br>")).addTo(map);
+    });
+    if (l.bounds) all = all ? [Math.min(all[0], l.bounds[0]), Math.min(all[1], l.bounds[1]),
+                               Math.max(all[2], l.bounds[2]), Math.max(all[3], l.bounds[3])] : l.bounds;
+  });
+  if (all) map.fitBounds([[all[0], all[1]], [all[2], all[3]]], { padding: 30, duration: 0 });
+  setInterval(async () => {
+    const s = (await (await fetch("stats")).json()).cache;
+    if (s) document.getElementById("stats").textContent = `cache: ${s.entries} tiles, ${(s.bytes / 1024).toFixed(0)} KiB, ${s.hits} hits / ${s.misses} misses`;
+  }, 2000);
+});
+</script>
+</body>
+</html>
