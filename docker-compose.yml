@@ -1,0 +1,32 @@
+# Local PostGIS with seed data for development and the integration test.
+#   docker compose up -d db
+#   go run ./cmd/pg-tileserver        # http://localhost:7800/
+#   docker compose down -v
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_USER: tiles
+      POSTGRES_PASSWORD: tiles   # local development only
+      POSTGRES_DB: tiles
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tiles -d tiles"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 60s
+
+  tileserver:
+    build: .
+    profiles: ["full"]
+    environment:
+      DATABASE_URL: postgres://tiles:tiles@db:5432/tiles
+    ports:
+      - "127.0.0.1:7800:7800"
+    depends_on:
+      db:
+        condition: service_healthy
